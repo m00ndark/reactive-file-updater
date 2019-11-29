@@ -5,7 +5,7 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{3F1ABE4B-43C2-4556-8EEA-8C1FBB339889}</ProjectGuid>
-    <OutputType>Library</OutputType>
+    <OutputType>WinExe</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>ReactiveFileUpdater</RootNamespace>
     <AssemblyName>ReactiveFileUpdater</AssemblyName>
@@ -32,6 +32,9 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
+  <PropertyGroup>
+    <StartupObject>ReactiveFileUpdater.Program</StartupObject>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="Newtonsoft.Json, Version=12.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>..\packages\Newtonsoft.Json.12.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
@@ -52,6 +55,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Extensions.cs" />
     <Compile Include="Model\FileUpdate.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="ReactiveFileUpdater.cs" />
@@ -70,6 +74,7 @@
     </Compile>
     <Compile Include="Settings.cs" />
     <Compile Include="Model\TargetFile.cs" />
+    <Compile Include="Model\UpdateQueueItem.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="External\ToolComponents.Core.dll" />

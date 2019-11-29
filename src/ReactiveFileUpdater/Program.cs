@@ -11,7 +11,7 @@ namespace ReactiveFileUpdater
 
 		private static void Main()
 		{
-			Logger.Initialize(APPLICATION_NAME, DefaultSourcedLogEntry.Headers);
+			Logger.Initialize(APPLICATION_NAME, DefaultLogEntry.Headers);
 
 			try
 			{

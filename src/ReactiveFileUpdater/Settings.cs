@@ -5,6 +5,7 @@ using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using ReactiveFileUpdater.Model;
+using ToolComponents.Core.Logging;
 
 namespace ReactiveFileUpdater
 {
@@ -14,17 +15,18 @@ namespace ReactiveFileUpdater
 		private const string SETTINGS_FILE_NAME = "settings.json";
 
 		public List<FileUpdate> FileUpdates { get; set; } = new List<FileUpdate>();
+		public TimeSpan PollFrequency { get; set; } = TimeSpan.FromSeconds(2);
 
 		// ---------------------------------------------------------------------
 
 		private static Settings _settings;
 		private static readonly object _lock = new object();
-		private static readonly string _path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), SETTINGS_FOLDER_NAME);
+		private static readonly string _path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), SETTINGS_FOLDER_NAME);
 		private static readonly string _filePath = Path.Combine(_path, SETTINGS_FILE_NAME);
 
 		private static readonly JsonSerializerSettings _serializerSettings = new JsonSerializerSettings
 			{
-				DefaultValueHandling = DefaultValueHandling.IgnoreAndPopulate,
+				DefaultValueHandling = DefaultValueHandling.Ignore,
 				Converters = new JsonConverter[] { new StringEnumConverter() }
 			};
 
@@ -46,13 +48,15 @@ namespace ReactiveFileUpdater
 
 		private static Settings Load()
 		{
+			Logger.Add($"Loading configuration from {_filePath}");
 			string json = Exist ? File.ReadAllText(_filePath, Encoding.UTF8) : null;
 			return Deserialize(string.IsNullOrWhiteSpace(json) ? "{}" : json).PostProcess();
 		}
 
 		private Settings PostProcess()
 		{
-			// add post processing here
+			if (PollFrequency < TimeSpan.FromSeconds(1))
+				PollFrequency = TimeSpan.FromSeconds(1);
 
 			return this;
 		}
