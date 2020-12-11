@@ -12,7 +12,8 @@ namespace ReactiveFileUpdater
 {
 	public class ReactiveFileUpdater
 	{
-		private static readonly object _lock = new object();
+		private static readonly object _instanceLock = new object();
+		private static readonly object _targetFilesLock = new object();
 		private static volatile ReactiveFileUpdater _instance;
 
 		private Thread _mainThread;
@@ -28,7 +29,7 @@ namespace ReactiveFileUpdater
 				if (_instance != null)
 					return _instance;
 
-				lock (_lock)
+				lock (_instanceLock)
 				{
 					return _instance ?? (_instance = new ReactiveFileUpdater());
 				}
@@ -36,6 +37,11 @@ namespace ReactiveFileUpdater
 		}
 
 		public bool IsRunning => _mainThread != null;
+
+		public ReactiveFileUpdater()
+		{
+			_targetFiles = new List<TargetFile>();
+		}
 
 		public void Start()
 		{
@@ -64,40 +70,19 @@ namespace ReactiveFileUpdater
 			{
 				Logger.Add("Initializing..");
 
-				if (!(Settings.Default.FileUpdates?.Any() ?? false))
+				Settings.Changed += Settings_Changed;
+				Settings.EnableChangeNotifications();
+
+				if (!Settings.Default.Any())
 				{
 					Logger.Add("No or empty configuration, shutting down..");
-					return;
+					while (!Settings.Default.Any()) Thread.Sleep(1000);
 				}
 
 				_updateQueue = new BlockingCollection<UpdateQueueItem>();
 				_cancellationTokenSource = new CancellationTokenSource();
 
-				_targetFiles = Settings.Default.FileUpdates
-					.GroupBy(fileUpdate => fileUpdate.FilePath, StringComparer.InvariantCultureIgnoreCase)
-					.Select(fileUpdates => new TargetFile(fileUpdates.Key, fileUpdates.ToList()))
-					.Where(targetFile => targetFile.IsValid)
-					.ToList();
-
-				Logger.Add($"Loaded {_targetFiles.Count} valid file updates");
-				Logger.Add($"Poll frequency is {Settings.Default.PollFrequency}");
-
-				foreach (TargetFile targetFile in _targetFiles)
-				{
-					Logger.Add($"[{targetFile.Id}] Watching \"{targetFile.FilePath}\"");
-
-					foreach (FileUpdate fileUpdate in targetFile.FileUpdates)
-					{
-						Logger.Add($"[{targetFile.Id}] Registered update definition {fileUpdate.Id}: {fileUpdate.SearchPattern} >> {fileUpdate.ReplacePattern}");
-					}
-
-					//targetFile.UpdateProperties();
-					targetFile.Watcher = new FileSystemWatcher(targetFile.Path, targetFile.FileName);
-					targetFile.Watcher.Created += (_, e) => CheckFile(targetFile, CheckType.Watching);
-					targetFile.Watcher.Deleted += (_, e) => CheckFile(targetFile, CheckType.Watching);
-					targetFile.Watcher.Changed += (_, e) => CheckFile(targetFile, CheckType.Watching);
-					targetFile.Watcher.EnableRaisingEvents = true;
-				}
+				LoadConfiguration();
 
 				Logger.Add("Starting update thread..");
 
@@ -110,9 +95,12 @@ namespace ReactiveFileUpdater
 				{
 					try
 					{
-						foreach (TargetFile targetFile in _targetFiles)
+						lock (_targetFilesLock)
 						{
-							CheckFile(targetFile, CheckType.Polling);
+							foreach (TargetFile targetFile in _targetFiles)
+							{
+								CheckFile(targetFile, CheckType.Polling);
+							}
 						}
 					}
 					catch (Exception ex)
@@ -138,6 +126,70 @@ namespace ReactiveFileUpdater
 				_mainThread = null; // indicate that we are no longer running
 				Logger.Flush();
 			}
+		}
+
+		private void Settings_Changed(object sender, EventArgs e)
+		{
+			try
+			{
+				Logger.Add("Configuration changed, reloading..");
+				LoadConfiguration();
+			}
+			catch (Exception ex)
+			{
+				Logger.Add("Failed to update configuration", ex);
+			}
+		}
+
+		private void LoadConfiguration()
+		{
+			lock (_targetFilesLock)
+			{
+				foreach (TargetFile targetFile in _targetFiles)
+				{
+					targetFile.WatcherEvent -= TargetFile_WatcherEvent;
+					targetFile.DisableWatcher();
+				}
+
+				_targetFiles = Settings.Default.FileUpdates
+					.GroupBy(fileUpdate => fileUpdate.FilePath, StringComparer.InvariantCultureIgnoreCase)
+					.Select(fileUpdates => new TargetFile(fileUpdates.Key, fileUpdates.ToList()))
+					.Where(targetFile => targetFile.IsValid)
+					.ToList();
+
+				Logger.Add($"Loaded {_targetFiles.Count} valid file updates");
+				Logger.Add($"Poll frequency is {Settings.Default.PollFrequency}");
+
+				foreach (TargetFile targetFile in _targetFiles)
+				{
+					targetFile.WatcherEvent += TargetFile_WatcherEvent;
+
+					TryWatchFile(targetFile);
+
+					foreach (FileUpdate fileUpdate in targetFile.FileUpdates)
+					{
+						Logger.Add($"[{targetFile.Id}] Registered update definition {fileUpdate.Id}: {fileUpdate.SearchPattern} >> {fileUpdate.ReplacePattern}");
+					}
+				}
+			}
+		}
+
+		private static void TryWatchFile(TargetFile targetFile)
+		{
+			if (Directory.Exists(targetFile.Path))
+			{
+				Logger.Add($"[{targetFile.Id}] Watching \"{targetFile.FilePath}\"");
+				targetFile.EnableWatcher();
+			}
+			else
+			{
+				Logger.Add(LogType.Warning, $"[{targetFile.Id}] Unable to watch \"{targetFile.FilePath}\" (path does not exist)");
+			}
+		}
+
+		private void TargetFile_WatcherEvent(object sender, EventArgs e)
+		{
+			CheckFile((TargetFile) sender, CheckType.Watching);
 		}
 
 		private void UpdateThread()
@@ -169,15 +221,19 @@ namespace ReactiveFileUpdater
 
 		private void CheckFile(TargetFile targetFile, CheckType checkType)
 		{
-			if (targetFile.HasChanged())
-				_updateQueue.Add(new UpdateQueueItem(targetFile, checkType));
+			if (!targetFile.HasChanged()) return;
+
+			_updateQueue.Add(new UpdateQueueItem(targetFile, checkType));
+
+			if (!targetFile.IsWatching)
+				TryWatchFile(targetFile);
 		}
 
 		private static void UpdateFile(UpdateQueueItem item)
 		{
 			try
 			{
-				item.TargetFile.Watcher.EnableRaisingEvents = false;
+				item.TargetFile.EnableWatcherEvents();
 
 				(bool exists, long fileSize, DateTime modifiedTime) = item.TargetFile.GetLiveProperties();
 
@@ -227,7 +283,7 @@ namespace ReactiveFileUpdater
 			}
 			finally
 			{
-				item.TargetFile.Watcher.EnableRaisingEvents = true;
+				item.TargetFile.DisableWatcherEvents();
 			}
 		}
 	}

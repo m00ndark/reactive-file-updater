@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using ReactiveFileUpdater.Model;
@@ -19,6 +20,9 @@ namespace ReactiveFileUpdater
 
 		// ---------------------------------------------------------------------
 
+		private static FileSystemWatcher _watcher;
+		private static DateTime _lastWatcherEventTime;
+		private static bool _skipWatcherEvents;
 		private static Settings _settings;
 		private static readonly object _lock = new object();
 		private static readonly string _path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), SETTINGS_FOLDER_NAME);
@@ -30,13 +34,12 @@ namespace ReactiveFileUpdater
 				Converters = new JsonConverter[] { new StringEnumConverter() }
 			};
 
+		public static event EventHandler Changed;
+
 		public static Settings Default
 		{
 			get
 			{
-				if (_settings != null)
-					return _settings;
-
 				lock (_lock)
 				{
 					return _settings ?? (_settings = Load());
@@ -45,6 +48,14 @@ namespace ReactiveFileUpdater
 		}
 
 		public static bool Exist => File.Exists(_filePath);
+
+		private static void Reset()
+		{
+			lock (_lock)
+			{
+				_settings = null;
+			}
+		}
 
 		private static Settings Load()
 		{
@@ -67,13 +78,23 @@ namespace ReactiveFileUpdater
 
 			if (Exist && !Backup()) return;
 
+			bool watcherIsRaisingEvent = _watcher?.EnableRaisingEvents ?? false;
+
 			try
 			{
+				if (watcherIsRaisingEvent)
+					_watcher.EnableRaisingEvents = false;
+
 				File.WriteAllText(_filePath, Serialize(this), Encoding.UTF8);
 			}
 			catch
 			{
 				Restore();
+			}
+			finally
+			{
+				if (watcherIsRaisingEvent)
+					_watcher.EnableRaisingEvents = true;
 			}
 		}
 
@@ -101,6 +122,44 @@ namespace ReactiveFileUpdater
 			{
 				return false;
 			}
+		}
+
+		public static void EnableChangeNotifications()
+		{
+			if (_watcher != null) return;
+
+			_lastWatcherEventTime = DateTime.MinValue;
+			_watcher = new FileSystemWatcher(_path, SETTINGS_FILE_NAME);
+			_watcher.Created += Watcher_Event;
+			_watcher.Deleted += Watcher_Event;
+			_watcher.Changed += Watcher_Event;
+			_watcher.EnableRaisingEvents = true;
+		}
+
+		public static void DisableChangeNotifications()
+		{
+			if (_watcher == null) return;
+
+			_watcher.EnableRaisingEvents = false;
+			_watcher.Created -= Watcher_Event;
+			_watcher.Deleted -= Watcher_Event;
+			_watcher.Changed -= Watcher_Event;
+			_watcher = null;
+		}
+
+		private static void Watcher_Event(object sender, FileSystemEventArgs e)
+		{
+			Thread.Sleep(100);
+
+			DateTime now = DateTime.Now;
+			if (now - TimeSpan.FromMilliseconds(200) < _lastWatcherEventTime) return;
+
+			_lastWatcherEventTime = now;
+
+			if (_skipWatcherEvents) return;
+
+			Reset();
+			Changed?.Invoke(null, EventArgs.Empty);
 		}
 
 		private static Settings Deserialize(string json) => JsonConvert.DeserializeObject<Settings>(json, _serializerSettings);

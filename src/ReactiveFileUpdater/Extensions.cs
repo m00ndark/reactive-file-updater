@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using ReactiveFileUpdater.Model;
@@ -64,6 +65,11 @@ namespace ReactiveFileUpdater
 					Thread.Sleep(TimeSpan.FromMilliseconds(200));
 				}
 			}
+		}
+
+		public static bool Any(this Settings settings)
+		{
+			return Settings.Default.FileUpdates?.Any() ?? false;
 		}
 
 		public static string Pluralize(this string word, int count = int.MinValue)
