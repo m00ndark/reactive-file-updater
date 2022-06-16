@@ -248,7 +248,7 @@ namespace ReactiveFileUpdater
 						{
 							changes[fileUpdate]++;
 							return match.Result(fileUpdate.ReplacePattern);
-						}, RegexOptions.Multiline));
+						}, RegexOptions.Singleline | RegexOptions.Multiline));
 
 				int totalChanges = changes.Values.Sum();
 
